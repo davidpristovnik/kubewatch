@@ -63,6 +63,18 @@ func (e *Event) Message() (msg string) {
 			e.Namespace,
 			e.Reason,
 		)
+	case "node":
+		msg = fmt.Sprintf(
+			"A node `%s` has been `%s`",
+			e.Name,
+			e.Reason,
+		)
+	case "cluster role":
+		msg = fmt.Sprintf(
+			"A cluster role `%s` has been `%s`",
+			e.Name,
+			e.Reason,
+		)
 	default:
 		msg = fmt.Sprintf(
 			"A `%s` in namespace `%s` has been `%s`:\n`%s`",
