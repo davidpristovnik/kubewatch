@@ -69,7 +69,7 @@ func (e *Event) Message() (msg string) {
 			e.Name,
 			e.Reason,
 		)
-	case "cluster role":
+	case "clusterrole":
 		msg = fmt.Sprintf(
 			"A cluster role `%s` has been `%s`",
 			e.Name,

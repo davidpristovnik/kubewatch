@@ -45,7 +45,7 @@ type Resource struct {
 	ReplicationController bool `json:"rc"`
 	ReplicaSet            bool `json:"rs"`
 	DaemonSet             bool `json:"ds"`
-	Service              bool `json:"svc"`
+	Service               bool `json:"svc"`
 	Pod                   bool `json:"po"`
 	Job                   bool `json:"job"`
 	Node                  bool `json:"node"`
@@ -246,6 +246,12 @@ func (c *Config) UnmarshallConfig() {
 		if c.Resource.Service {
 			c.Event.Global = append(c.Event.Global, "service")
 		}
+		if c.Resource.ServiceAccount {
+			c.Event.Global = append(c.Event.Global, "serviceaccount")
+		}
+		if c.Resource.ClusterRole {
+			c.Event.Global = append(c.Event.Global, "clusterrole")
+		}
 		if c.Resource.Job {
 			c.Event.Global = append(c.Event.Global, "job")
 		}
@@ -269,6 +275,8 @@ func (c *Config) UnmarshallConfig() {
 		c.configureEvents(c.Event.Update)
 		c.configureEvents(c.Event.Delete)
 	}
+	// add critical resources to global
+	c.Event.Global = append(c.Event.Global, "NodeNotReady", "NodeReady", "NodeRebooted", "Backoff")
 }
 
 func (c *Config) configureEvents(s []string) {
@@ -293,6 +301,14 @@ func (c *Config) configureEvents(s []string) {
 		case "service":
 			{
 				c.Resource.Service = true
+			}
+		case "serviceaccount":
+			{
+				c.Resource.ServiceAccount = true
+			}
+		case "clusterrole":
+			{
+				c.Resource.ClusterRole = true
 			}
 		case "pod":
 			{

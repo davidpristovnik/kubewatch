@@ -23,8 +23,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"strings"
-
+	
 	"github.com/Sirupsen/logrus"
 	"github.com/bitnami-labs/kubewatch/config"
 	"github.com/bitnami-labs/kubewatch/pkg/event"
@@ -331,7 +330,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, "replication controller")
+		c := newResourceController(kubeClient, eventHandler, informer, "replicationcontroller")
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -397,7 +396,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, "service account")
+		c := newResourceController(kubeClient, eventHandler, informer, "serviceaccount")
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -419,7 +418,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, "cluster role")
+		c := newResourceController(kubeClient, eventHandler, informer, "clusterrole")
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -441,7 +440,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, "persistent volume")
+		c := newResourceController(kubeClient, eventHandler, informer, "persistentvolume")
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -642,11 +641,12 @@ func (c *Controller) processItem(newEvent Event) error {
 	var status string
 
 	// namespace retrived from event key incase namespace value is empty
-	if newEvent.namespace == "" {
-		newEvent.namespace = strings.Split(newEvent.key, "/")[0]
-		newEvent.key = strings.Split(newEvent.key, "/")[1]
+	if newEvent.namespace == "" && strings.Contains(newEvent.key, "/") {
+		substring := strings.Split(newEvent.key, "/")
+		newEvent.namespace = substring[0]
+		newEvent.key = substring[1]
 	}
-	
+
 	// process events based on its type
 	switch newEvent.eventType {
 	case "create":
