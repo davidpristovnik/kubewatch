@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	"strings"
@@ -50,6 +51,12 @@ const maxRetries = 5
 
 var serverStartTime time.Time
 
+// Maps for holding events config 
+var global map[string]uint8
+var create map[string]uint8
+var delete map[string]uint8
+var update map[string]uint8
+
 // Event indicate the informerEvent
 type Event struct {
 	key          string
@@ -69,6 +76,10 @@ type Controller struct {
 
 // Start prepares watchers and run their controllers, then waits for process termination signals
 func Start(conf *config.Config, eventHandler handlers.Handler) {
+
+	// loads events config into memory for granular alerting
+	loadEventConfig(conf)
+
 	var kubeClient kubernetes.Interface
 	_, err := rest.InClusterConfig()
 	if err != nil {
@@ -239,7 +250,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 		go c.Run(stopCh)
 	}
 
-	if conf.Resource.Services {
+	if conf.Resource.Service {
 		informer := cache.NewSharedIndexInformer(
 			&cache.ListWatch{
 				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
@@ -635,7 +646,7 @@ func (c *Controller) processItem(newEvent Event) error {
 		newEvent.namespace = strings.Split(newEvent.key, "/")[0]
 		newEvent.key = strings.Split(newEvent.key, "/")[1]
 	}
-
+	
 	// process events based on its type
 	switch newEvent.eventType {
 	case "create":
@@ -661,7 +672,11 @@ func (c *Controller) processItem(newEvent Event) error {
 				Status: status,
 				Reason: "Created",
 			}
-			c.eventHandler.ObjectCreated(kbEvent)
+			if _, ok := global[newEvent.resourceType]; ok {
+				c.eventHandler.ObjectCreated(kbEvent)
+			} else if _, ok := create[newEvent.resourceType]; ok {
+				c.eventHandler.ObjectCreated(kbEvent)
+			}
 			return nil
 		}
 	case "update":
@@ -681,7 +696,11 @@ func (c *Controller) processItem(newEvent Event) error {
 			Status: status,
 			Reason: "Updated",
 		}
-		c.eventHandler.ObjectUpdated(obj, kbEvent)
+		if _, ok := global[newEvent.resourceType]; ok {
+			c.eventHandler.ObjectUpdated(obj, kbEvent)
+		} else if _, ok := update[newEvent.resourceType]; ok {
+			c.eventHandler.ObjectUpdated(obj, kbEvent)
+		}
 		return nil
 	case "delete":
 		kbEvent := event.Event{
@@ -691,8 +710,48 @@ func (c *Controller) processItem(newEvent Event) error {
 			Status: "Danger",
 			Reason: "Deleted",
 		}
-		c.eventHandler.ObjectDeleted(kbEvent)
+		if _, ok := global[newEvent.resourceType]; ok {
+			c.eventHandler.ObjectDeleted(kbEvent)
+		} else if _, ok := delete[newEvent.resourceType]; ok {
+			c.eventHandler.ObjectDeleted(kbEvent)
+		}
 		return nil
 	}
 	return nil
+}
+
+// loadEventConfig loads event list from Event config for granular alerting
+func loadEventConfig(c *config.Config) {
+
+	// Load Global events
+	if len(c.Event.Global) > 0 {
+		global = make(map[string]uint8)
+		for _, r := range c.Event.Global {
+			global[r] = 0
+		}
+	}
+
+	// Load Create events
+	if len(c.Event.Create) > 0 {
+		create = make(map[string]uint8)
+		for _, r := range c.Event.Create {
+			create[r] = 0
+		}
+	}
+
+	// Load Update events
+	if len(c.Event.Update) > 0 {
+		update = make(map[string]uint8)
+		for _, r := range c.Event.Update {
+			update[r] = 0
+		}
+	}
+
+	// Load Delete events
+	if len(c.Event.Delete) > 0 {
+		delete = make(map[string]uint8)
+		for _, r := range c.Event.Delete {
+			delete[r] = 0
+		}
+	}
 }
