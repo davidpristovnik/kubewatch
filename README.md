@@ -1,6 +1,9 @@
-# Kubewatch
+<p align="center">
+  <img src="./docs/kubewatch-logo.jpeg">
+</p>
 
-[![Build Status](https://travis-ci.org/bitnami-labs/kubewatch.svg?branch=master)](https://travis-ci.org/bitnami-labs/kubewatch) [![Go Report Card](https://goreportcard.com/badge/github.com/bitnami-labs/kubewatch)](https://goreportcard.com/report/github.com/bitnami-labs/kubewatch) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/bitnami-labs/kubewatch/blob/master/LICENSE)
+
+[![Build Status](https://travis-ci.org/bitnami-labs/kubewatch.svg?branch=master)](https://travis-ci.org/bitnami-labs/kubewatch) [![Go Report Card](https://goreportcard.com/badge/github.com/bitnami-labs/kubewatch)](https://goreportcard.com/report/github.com/bitnami-labs/kubewatch) [![GoDoc](https://godoc.org/github.com/bitnami-labs/kubewatch?status.svg)](https://godoc.org/github.com/bitnami-labs/kubewatch) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/bitnami-labs/kubewatch/blob/master/LICENSE)
 
 **kubewatch** is a Kubernetes watcher that currently publishes notification to available collaboration hubs/notification channels. Run it in your k8s cluster, and you will get event notifications through webhooks.
 
@@ -8,7 +11,7 @@
 ```
 $ kubewatch -h
 
-Kubewath: A watcher for Kubernetes
+Kubewatch: A watcher for Kubernetes
 
 kubewatch is a Kubernetes watcher that could publishes notification 
 to Slack/hipchat/mattermost/flock channels. It watches the culster 
@@ -54,14 +57,21 @@ You may also provide a values file instead:
 rbac:
   create: true
 resourcesToWatch:
-  daemonset: true
   deployment: false
-  pod: true
-  replicaset: false
   replicationcontroller: false
+  replicaset: false
+  daemonset: false
   services: true
+  pod: true
+  job: false
+  node: false
+  clusterrole: true
+  serviceaccount: true
+  persistentvolume: false
+  namespace: false
   secret: false
   configmap: false
+  ingress: false
 slack:
   channel: '#YOUR_CHANNEL'
   token: 'xoxb-YOUR_TOKEN'
@@ -101,15 +111,21 @@ To modify what notifications you get, update the `kubewatch` ConfigMap and turn 
 
 ```
 resource:
-      deployment: false
-      replicationcontroller: false
-      replicaset: false
-      daemonset: false
-      services: true
-      pod: true
-      secret: false
-      configmap: false
-      ingress: false
+  deployment: false
+  replicationcontroller: false
+  replicaset: false
+  daemonset: false
+  services: true
+  pod: true
+  job: false
+  node: false
+  clusterrole: false
+  serviceaccount: false
+  persistentvolume: false
+  namespace: false
+  secret: false
+  configmap: false
+  ingress: false
 ```
 
 #### Working with RBAC
@@ -163,6 +179,36 @@ INFO[0000] Processing add to pod: kube-system/tiller-deploy-69ffbf64bc-h8zxm  pk
 INFO[0000] Kubewatch controller synced and ready         pkg=kubewatch-service
 INFO[0000] Kubewatch controller synced and ready         pkg=kubewatch-pod
 
+```
+#### Using Docker:
+
+To Run Kubewatch Container interactively, place the config file in `$HOME/.kubewatch.yaml` location and use the following command. 
+
+```
+docker run --rm -it --network host -v $HOME/.kubewatch.yaml:/root/.kubewatch.yaml -v $HOME/.kube/config:/opt/bitnami/kubewatch/.kube/config --name <container-name> bitnami/kubewatch
+```
+
+Example:
+
+```
+$ docker run --rm -it --network host -v $HOME/.kubewatch.yaml:/root/.kubewatch.yaml -v $HOME/.kube/config:/opt/bitnami/kubewatch/.kube/config --name kubewatch-app bitnami/kubewatch
+
+==> Writing config file...
+INFO[0000] Starting kubewatch controller                 pkg=kubewatch-service
+INFO[0000] Starting kubewatch controller                 pkg=kubewatch-pod
+INFO[0000] Starting kubewatch controller                 pkg=kubewatch-deployment
+INFO[0000] Starting kubewatch controller                 pkg=kubewatch-namespace
+INFO[0000] Processing add to namespace: kube-node-lease  pkg=kubewatch-namespace
+INFO[0000] Processing add to namespace: kube-public      pkg=kubewatch-namespace
+INFO[0000] Processing add to namespace: kube-system      pkg=kubewatch-namespace
+INFO[0000] Processing add to namespace: default          pkg=kubewatch-namespace
+....
+```
+
+To Demonise Kubewatch container use
+
+```
+$ docker run --rm -d --network host -v $HOME/.kubewatch.yaml:/root/.kubewatch.yaml -v $HOME/.kube/config:/opt/bitnami/kubewatch/.kube/config --name kubewatch-app bitnami/kubewatch
 ```
 
 # Configure
@@ -270,6 +316,8 @@ handler:
     url: ""
   webhook:
     url: ""
+
+// Resource Config Section for generic alerting
 resource:
   deployment: false
   replicationcontroller: false
@@ -278,11 +326,27 @@ resource:
   services: false
   pod: true
   job: false
+  node: false
+  clusterrole: false
+  serviceaccount: false
   persistentvolume: false
   namespace: false
   secret: false
   configmap: false
   ingress: false
+
+// Events Config Section for granular alerting
+event:
+    global:
+     - pod
+     - deployment
+    create:
+     - service
+    update:
+
+    delete:
+     - job
+     - service
 namespace: ""
 
 ```
@@ -306,19 +370,22 @@ Available Commands:
   remove      remove specific resources being watched
 
 Flags:
-      --cm       watch for plain configmap
-      --deploy   watch for deployments
-      --ds       watch for daemonsets
-  -h, --help     help for resource
-      --ing      watch for ingresses
-      --job      watch for job
-      --ns       watch for namespaces
-      --po       watch for pods
-      --pv       watch for persistent volumes
-      --rc       watch for replication controllers
-      --rs       watch for replicasets
-      --secret   watch for plain secrets
-      --svc      watch for services
+      --clusterrole   watch for cluster roles
+      --cm            watch for plain configmaps
+      --deploy        watch for deployments
+      --ds            watch for daemonsets
+  -h, --help          help for resource
+      --ing           watch for ingresses
+      --job           watch for jobs
+      --node          watch for Nodes
+      --ns            watch for namespaces
+      --po            watch for pods
+      --pv            watch for persistent volumes
+      --rc            watch for replication controllers
+      --rs            watch for replicasets
+      --sa            watch for service accounts
+      --secret        watch for plain secrets
+      --svc           watch for services
 
 Use "kubewatch resource [command] --help" for more information about a command.
 
@@ -337,18 +404,21 @@ Flags:
   -h, --help   help for add
 
 Global Flags:
-      --cm       watch for plain configmaps
-      --deploy   watch for deployments
-      --ds       watch for daemonsets
-      --ing      watch for ingresses
-      --job      watch for jobs
-      --ns       watch for namespaces
-      --po       watch for pods
-      --pv       watch for persistent volumes
-      --rc       watch for replication controllers
-      --rs       watch for replicasets
-      --secret   watch for plain secrets
-      --svc      watch for services
+      --clusterrole   watch for cluster roles
+      --cm            watch for plain configmaps
+      --deploy        watch for deployments
+      --ds            watch for daemonsets
+      --ing           watch for ingresses
+      --job           watch for jobs
+      --node          watch for Nodes
+      --ns            watch for namespaces
+      --po            watch for pods
+      --pv            watch for persistent volumes
+      --rc            watch for replication controllers
+      --rs            watch for replicasets
+      --sa            watch for service accounts
+      --secret        watch for plain secrets
+      --svc           watch for services
 
 ```
 
@@ -360,6 +430,31 @@ $ kubewatch resource add --rc --po --svc
 
 # rc, po and svc will be stoped from being watched
 $ kubewatch resource remove --rc --po --svc
+```
+
+## Events
+
+Event config section in `.kubewatch.yaml` file can be used for granular alerting.
+
+```
+handler:
+  slack:
+    token: xoxb-xxxxx-yyyyyyy
+    channel: kube-watch-test
+
+event:
+    global:                       // global alerts for all events
+     - pod
+     - deployment
+    create:                       // create alerts for resource object creation
+     - service
+    update:                       // update alerts for resource object updation
+     - 
+    delete:                       // delete alerts for resource object deletion
+     - job
+     - service
+
+namespace: ""
 ```
 
 # Build
@@ -401,4 +496,4 @@ kubewatch           latest              919896d3cd90        3 minutes ago       
 
 # Contribution
 
-Refer the [contribution guidlines](docs/CONTRIBUTION.md) to get started.
+Refer the [contribution guidelines](docs/CONTRIBUTION.md) to get started.

@@ -20,9 +20,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
-
+	
 	"github.com/Sirupsen/logrus"
 	"github.com/bitnami-labs/kubewatch/config"
 	"github.com/bitnami-labs/kubewatch/pkg/event"
@@ -33,6 +34,7 @@ import (
 	batch_v1 "k8s.io/api/batch/v1"
 	api_v1 "k8s.io/api/core/v1"
 	ext_v1beta1 "k8s.io/api/extensions/v1beta1"
+	rbac_v1beta1 "k8s.io/api/rbac/v1beta1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -47,6 +49,12 @@ import (
 const maxRetries = 5
 
 var serverStartTime time.Time
+
+// Maps for holding events config 
+var global map[string]uint8
+var create map[string]uint8
+var delete map[string]uint8
+var update map[string]uint8
 
 // Event indicate the informerEvent
 type Event struct {
@@ -67,6 +75,10 @@ type Controller struct {
 
 // Start prepares watchers and run their controllers, then waits for process termination signals
 func Start(conf *config.Config, eventHandler handlers.Handler) {
+
+	// loads events config into memory for granular alerting
+	loadEventConfig(conf)
+
 	var kubeClient kubernetes.Interface
 	_, err := rest.InClusterConfig()
 	if err != nil {
@@ -74,6 +86,79 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 	} else {
 		kubeClient = utils.GetClient()
 	}
+
+	// Adding Default Critical Alerts
+	// For Capturing Critical Event NodeNotReady in Nodes
+	nodeNotReadyInformer := cache.NewSharedIndexInformer(
+		&cache.ListWatch{
+			ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
+				options.FieldSelector = "involvedObject.kind=Node,type=Normal,reason=NodeNotReady"
+				return kubeClient.CoreV1().Events(conf.Namespace).List(options)
+			},
+			WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
+				options.FieldSelector = "involvedObject.kind=Node,type=Normal,reason=NodeNotReady"
+				return kubeClient.CoreV1().Events(conf.Namespace).Watch(options)
+			},
+		},
+		&api_v1.Event{},
+		0, //Skip resync
+		cache.Indexers{},
+	)
+
+	nodeNotReadyController := newResourceController(kubeClient, eventHandler, nodeNotReadyInformer, "NodeNotReady")
+	stopNodeNotReadyCh := make(chan struct{})
+	defer close(stopNodeNotReadyCh)
+
+	go nodeNotReadyController.Run(stopNodeNotReadyCh)
+
+	// For Capturing Critical Event NodeReady in Nodes
+	nodeReadyInformer := cache.NewSharedIndexInformer(
+		&cache.ListWatch{
+			ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
+				options.FieldSelector = "involvedObject.kind=Node,type=Normal,reason=NodeReady"
+				return kubeClient.CoreV1().Events(conf.Namespace).List(options)
+			},
+			WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
+				options.FieldSelector = "involvedObject.kind=Node,type=Normal,reason=NodeReady"
+				return kubeClient.CoreV1().Events(conf.Namespace).Watch(options)
+			},
+		},
+		&api_v1.Event{},
+		0, //Skip resync
+		cache.Indexers{},
+	)
+
+	nodeReadyController := newResourceController(kubeClient, eventHandler, nodeReadyInformer, "NodeReady")
+	stopNodeReadyCh := make(chan struct{})
+	defer close(stopNodeReadyCh)
+
+	go nodeReadyController.Run(stopNodeReadyCh)
+
+	// For Capturing Critical Event NodeRebooted in Nodes
+	nodeRebootedInformer := cache.NewSharedIndexInformer(
+		&cache.ListWatch{
+			ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
+				options.FieldSelector = "involvedObject.kind=Node,type=Warning,reason=Rebooted"
+				return kubeClient.CoreV1().Events(conf.Namespace).List(options)
+			},
+			WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
+				options.FieldSelector = "involvedObject.kind=Node,type=Warning,reason=Rebooted"
+				return kubeClient.CoreV1().Events(conf.Namespace).Watch(options)
+			},
+		},
+		&api_v1.Event{},
+		0, //Skip resync
+		cache.Indexers{},
+	)
+
+	nodeRebootedController := newResourceController(kubeClient, eventHandler, nodeRebootedInformer, "NodeRebooted")
+	stopNodeRebootedCh := make(chan struct{})
+	defer close(stopNodeRebootedCh)
+
+	go nodeRebootedController.Run(stopNodeRebootedCh)
+
+
+	// User Configured Events  
 	if conf.Resource.Pod {
 		informer := cache.NewSharedIndexInformer(
 			&cache.ListWatch{
@@ -94,6 +179,30 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 		defer close(stopCh)
 
 		go c.Run(stopCh)
+
+		// For Capturing CrashLoopBackOff Events in pods
+		backoffInformer := cache.NewSharedIndexInformer(
+			&cache.ListWatch{
+				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
+					options.FieldSelector = "involvedObject.kind=Pod,type=Warning,reason=BackOff"
+					return kubeClient.CoreV1().Events(conf.Namespace).List(options)
+				},
+				WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
+					options.FieldSelector = "involvedObject.kind=Pod,type=Warning,reason=BackOff"
+					return kubeClient.CoreV1().Events(conf.Namespace).Watch(options)
+				},
+			},
+			&api_v1.Event{},
+			0, //Skip resync
+			cache.Indexers{},
+		)
+
+		backoffcontroller := newResourceController(kubeClient, eventHandler, backoffInformer, "Backoff")
+		stopBackoffCh := make(chan struct{})
+		defer close(stopBackoffCh)
+
+		go backoffcontroller.Run(stopBackoffCh)
+
 	}
 
 	if conf.Resource.DaemonSet {
@@ -140,7 +249,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 		go c.Run(stopCh)
 	}
 
-	if conf.Resource.Services {
+	if conf.Resource.Service {
 		informer := cache.NewSharedIndexInformer(
 			&cache.ListWatch{
 				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
@@ -221,7 +330,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, "replication controller")
+		c := newResourceController(kubeClient, eventHandler, informer, "replicationcontroller")
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -250,6 +359,72 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 		go c.Run(stopCh)
 	}
 
+	if conf.Resource.Node {
+		informer := cache.NewSharedIndexInformer(
+			&cache.ListWatch{
+				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
+					return kubeClient.CoreV1().Nodes().List(options)
+				},
+				WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
+					return kubeClient.CoreV1().Nodes().Watch(options)
+				},
+			},
+			&api_v1.Node{},
+			0, //Skip resync
+			cache.Indexers{},
+		)
+
+		c := newResourceController(kubeClient, eventHandler, informer, "node")
+		stopCh := make(chan struct{})
+		defer close(stopCh)
+
+		go c.Run(stopCh)
+	}
+
+	if conf.Resource.ServiceAccount {
+		informer := cache.NewSharedIndexInformer(
+			&cache.ListWatch{
+				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
+					return kubeClient.CoreV1().ServiceAccounts(conf.Namespace).List(options)
+				},
+				WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
+					return kubeClient.CoreV1().ServiceAccounts(conf.Namespace).Watch(options)
+				},
+			},
+			&api_v1.ServiceAccount{},
+			0, //Skip resync
+			cache.Indexers{},
+		)
+
+		c := newResourceController(kubeClient, eventHandler, informer, "serviceaccount")
+		stopCh := make(chan struct{})
+		defer close(stopCh)
+
+		go c.Run(stopCh)
+	}
+
+	if conf.Resource.ClusterRole {
+		informer := cache.NewSharedIndexInformer(
+			&cache.ListWatch{
+				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
+					return kubeClient.RbacV1beta1().ClusterRoles().List(options)
+				},
+				WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
+					return kubeClient.RbacV1beta1().ClusterRoles().Watch(options)
+				},
+			},
+			&rbac_v1beta1.ClusterRole{},
+			0, //Skip resync
+			cache.Indexers{},
+		)
+
+		c := newResourceController(kubeClient, eventHandler, informer, "clusterrole")
+		stopCh := make(chan struct{})
+		defer close(stopCh)
+
+		go c.Run(stopCh)
+	}
+
 	if conf.Resource.PersistentVolume {
 		informer := cache.NewSharedIndexInformer(
 			&cache.ListWatch{
@@ -265,7 +440,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, "persistent volume")
+		c := newResourceController(kubeClient, eventHandler, informer, "persistentvolume")
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -461,6 +636,16 @@ func (c *Controller) processItem(newEvent Event) error {
 	}
 	// get object's metedata
 	objectMeta := utils.GetObjectMetaData(obj)
+	
+	// hold status type for default critical alerts
+	var status string
+
+	// namespace retrived from event key incase namespace value is empty
+	if newEvent.namespace == "" && strings.Contains(newEvent.key, "/") {
+		substring := strings.Split(newEvent.key, "/")
+		newEvent.namespace = substring[0]
+		newEvent.key = substring[1]
+	}
 
 	// process events based on its type
 	switch newEvent.eventType {
@@ -468,27 +653,105 @@ func (c *Controller) processItem(newEvent Event) error {
 		// compare CreationTimestamp and serverStartTime and alert only on latest events
 		// Could be Replaced by using Delta or DeltaFIFO
 		if objectMeta.CreationTimestamp.Sub(serverStartTime).Seconds() > 0 {
-			c.eventHandler.ObjectCreated(obj)
+			switch newEvent.resourceType {
+			case "NodeNotReady":
+				status = "Danger"
+			case "NodeReady":
+				status = "Normal"
+			case "NodeRebooted":
+				status = "Danger"
+			case "Backoff":
+				status = "Danger"
+			default:
+				status = "Normal"
+			}
+			kbEvent := event.Event{
+				Name: objectMeta.Name,
+				Namespace: newEvent.namespace,
+				Kind: newEvent.resourceType,
+				Status: status,
+				Reason: "Created",
+			}
+			if _, ok := global[newEvent.resourceType]; ok {
+				c.eventHandler.ObjectCreated(kbEvent)
+			} else if _, ok := create[newEvent.resourceType]; ok {
+				c.eventHandler.ObjectCreated(kbEvent)
+			}
 			return nil
 		}
 	case "update":
 		/* TODOs
 		- enahace update event processing in such a way that, it send alerts about what got changed.
 		*/
-		kbEvent := event.Event{
-			Kind: newEvent.resourceType,
-			Name: newEvent.key,
+		switch newEvent.resourceType {
+		case "Backoff":
+			status = "Danger"
+		default:
+			status = "Warning"
 		}
-		c.eventHandler.ObjectUpdated(obj, kbEvent)
+		kbEvent := event.Event{
+			Name: newEvent.key,
+			Namespace: newEvent.namespace,
+			Kind: newEvent.resourceType,
+			Status: status,
+			Reason: "Updated",
+		}
+		if _, ok := global[newEvent.resourceType]; ok {
+			c.eventHandler.ObjectUpdated(obj, kbEvent)
+		} else if _, ok := update[newEvent.resourceType]; ok {
+			c.eventHandler.ObjectUpdated(obj, kbEvent)
+		}
 		return nil
 	case "delete":
 		kbEvent := event.Event{
-			Kind:      newEvent.resourceType,
 			Name:      newEvent.key,
 			Namespace: newEvent.namespace,
+			Kind:      newEvent.resourceType,
+			Status: "Danger",
+			Reason: "Deleted",
 		}
-		c.eventHandler.ObjectDeleted(kbEvent)
+		if _, ok := global[newEvent.resourceType]; ok {
+			c.eventHandler.ObjectDeleted(kbEvent)
+		} else if _, ok := delete[newEvent.resourceType]; ok {
+			c.eventHandler.ObjectDeleted(kbEvent)
+		}
 		return nil
 	}
 	return nil
+}
+
+// loadEventConfig loads event list from Event config for granular alerting
+func loadEventConfig(c *config.Config) {
+
+	// Load Global events
+	if len(c.Event.Global) > 0 {
+		global = make(map[string]uint8)
+		for _, r := range c.Event.Global {
+			global[r] = 0
+		}
+	}
+
+	// Load Create events
+	if len(c.Event.Create) > 0 {
+		create = make(map[string]uint8)
+		for _, r := range c.Event.Create {
+			create[r] = 0
+		}
+	}
+
+	// Load Update events
+	if len(c.Event.Update) > 0 {
+		update = make(map[string]uint8)
+		for _, r := range c.Event.Update {
+			update[r] = 0
+		}
+	}
+
+	// Load Delete events
+	if len(c.Event.Delete) > 0 {
+		delete = make(map[string]uint8)
+		for _, r := range c.Event.Delete {
+			delete[r] = 0
+		}
+	}
 }

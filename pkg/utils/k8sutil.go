@@ -9,6 +9,7 @@ import (
 	api_v1 "k8s.io/api/core/v1"
 	ext_v1beta1 "k8s.io/api/extensions/v1beta1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	rbac_v1beta1 "k8s.io/api/rbac/v1beta1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -53,10 +54,8 @@ func GetClientOutOfCluster() kubernetes.Interface {
 }
 
 // GetObjectMetaData returns metadata of a given k8s object
-func GetObjectMetaData(obj interface{}) meta_v1.ObjectMeta {
-
-	var objectMeta meta_v1.ObjectMeta
-
+func GetObjectMetaData(obj interface{}) (objectMeta meta_v1.ObjectMeta) {
+	
 	switch object := obj.(type) {
 	case *apps_v1.Deployment:
 		objectMeta = object.ObjectMeta
@@ -79,6 +78,14 @@ func GetObjectMetaData(obj interface{}) meta_v1.ObjectMeta {
 	case *api_v1.Secret:
 		objectMeta = object.ObjectMeta
 	case *ext_v1beta1.Ingress:
+		objectMeta = object.ObjectMeta
+	case *api_v1.Node:
+		objectMeta = object.ObjectMeta
+	case *rbac_v1beta1.ClusterRole:
+		objectMeta = object.ObjectMeta
+	case *api_v1.ServiceAccount:
+		objectMeta = object.ObjectMeta
+	case *api_v1.Event:
 		objectMeta = object.ObjectMeta
 	}
 	return objectMeta
