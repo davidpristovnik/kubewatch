@@ -22,21 +22,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// flockConfigCmd represents the flock subcommand
-var flockConfigCmd = &cobra.Command{
-	Use:   "flock",
-	Short: "specific flock configuration",
-	Long:  `specific flock configuration`,
+// msteamsConfigCmd represents the msteams subcommand
+var msteamsConfigCmd = &cobra.Command{
+	Use:   "MS Teams FLAG",
+	Short: "specific MS Teams configuration",
+	Long:  `specific MS Teams configuration`,
 	Run: func(cmd *cobra.Command, args []string) {
 		conf, err := config.New()
 		if err != nil {
 			logrus.Fatal(err)
 		}
 
-		url, err := cmd.Flags().GetString("url")
+		webhookURL, err := cmd.Flags().GetString("webhookurl")
 		if err == nil {
-			if len(url) > 0 {
-				conf.Handler.Flock.Url = url
+			if len(webhookURL) > 0 {
+				conf.Handler.MSTeams.WebhookURL = webhookURL
 			}
 		} else {
 			logrus.Fatal(err)
@@ -49,5 +49,5 @@ var flockConfigCmd = &cobra.Command{
 }
 
 func init() {
-	flockConfigCmd.Flags().StringP("url", "u", "", "Specify Flock url")
+	msteamsConfigCmd.Flags().StringP("webhookurl", "w", "", "Specify MS Teams webhook URL")
 }
